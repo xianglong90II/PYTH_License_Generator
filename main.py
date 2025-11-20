@@ -7,67 +7,64 @@ import random
 import string
 import json
 from tkinter import filedialog
+import assets
+import generator
+import io_ops
+import config
 
 def save_project():
     if img is None:
         messagebox.showerror("错误", "没有打开的图片")
         return
-    
-    # 构建工程数据
+
     project_data = {
-        "image_path": img_path,  # 当前图片路径
-        "text_layers": text_layers  # 所有文字图层信息
+        "image_path": img_path,
+        "text_layers": text_layers
     }
-    
-    # 弹出文件保存对话框
+
     save_path = tk.filedialog.asksaveasfilename(
         defaultextension=".json",
         filetypes=[("JSON 文件", "*.json")]
     )
-    
+
     if save_path:
-        try:
-            with open(save_path, "w", encoding="utf-8") as f:
-                json.dump(project_data, f, ensure_ascii=False, indent=4)
+        ok = io_ops.save_project_to_path(project_data, save_path)
+        if ok:
             messagebox.showinfo("成功", "工程已保存")
-        except Exception as e:
-            messagebox.showerror("错误", f"保存工程失败: {e}")
 
 def load_project():
     global img, img_path, img_tk, draw, text_layers
-    
-    # 弹出文件选择对话框
+
     load_path = tk.filedialog.askopenfilename(
         filetypes=[("JSON 文件", "*.json")]
     )
-    
+
     if load_path:
+        project_data = io_ops.load_project_from_path(load_path)
+        if not project_data:
+            return
+
         try:
-            with open(load_path, "r", encoding="utf-8") as f:
-                project_data = json.load(f)
-            
-            # 加载图片
             img_path = project_data["image_path"]
             img = Image.open(img_path)
             draw = ImageDraw.Draw(img)
             img_tk = ImageTk.PhotoImage(img)
             canvas.create_image(0, 0, anchor=tk.NW, image=img_tk)
             canvas.config(width=img.width, height=img.height)
-            
-            # 恢复文字图层
+
             text_layers = project_data["text_layers"]
             update_layer_list()
             preview_text()
-            
+
             messagebox.showinfo("成功", "工程已加载")
         except Exception as e:
             messagebox.showerror("错误", f"加载工程失败: {e}")
 
 def load_images():
-    return [f for f in os.listdir("licenseImages") if f.endswith((".png", ".jpg", ".jpeg", ".bmp", ".gif"))]
+    return assets.load_images()
 
 def load_fonts():
-    return [f for f in os.listdir("fonts") if f.endswith(".ttf")]
+    return assets.load_fonts()
 
 def open_image(*args):
     global img, img_tk, img_path, draw, text_layers, preview_text_data
@@ -75,9 +72,6 @@ def open_image(*args):
     img = Image.open(img_path)
     draw = ImageDraw.Draw(img)
     img_tk = ImageTk.PhotoImage(img)
-    canvas.create_image(0, 0, anchor=tk.NW, image=img_tk)
-    canvas.config(width=img.width, height=img.height)
-    size_entry.delete(0, tk.END)
     size_entry.insert(0, str(min(img.width, img.height) // 10))
     x_entry.delete(0, tk.END)
     x_entry.insert(0, "0")
@@ -175,21 +169,17 @@ def remove_text():
 def save_image():
     if img is None:
         return
-    
-    # 创建 output_images 文件夹（如果不存在）
-    os.makedirs("output_images", exist_ok=True)
-    
-    # 生成最终图片
     final_img = img.copy()
     final_draw = ImageDraw.Draw(final_img)
     for text_data in text_layers:
         font = ImageFont.truetype(text_data["font"], text_data["size"])
         final_draw.text((text_data["x"], text_data["y"]), text_data["text"], fill=text_data["color"], font=font)
-    
-    # 获取保存路径
-    save_path = save_entry.get()
-    if save_path:
-        final_img.save(f"output_images/{save_path}.png")
+
+    save_name = save_entry.get()
+    if save_name:
+        ok = io_ops.save_image(final_img, save_name)
+        if ok:
+            messagebox.showinfo("成功", "图片已保存")
 
 def choose_color():
     color_code = colorchooser.askcolor(title="选择颜色")[1]
@@ -238,32 +228,7 @@ def adjust_font_size(offset):
     update_preview_text()
 
 def generate_random_text(random_mode, random_length):
-    if random_mode == "单词":
-        try:
-            with open("dictionary.txt", "r", encoding="utf-8") as file:
-                words = file.readlines()
-                random_words = random.sample(words, random_length)
-                return " ".join([word.strip() for word in random_words])
-        except FileNotFoundError:
-            messagebox.showerror("错误", "未找到字典文件")
-            return None
-    elif random_mode == "数字编码":
-        return ''.join(random.choices(string.ascii_uppercase + string.digits, k=random_length))
-    elif random_mode == "随机数字":
-        try:
-            min_value = int(random_digit_min_entry.get())
-            max_value = int(random_digit_max_entry.get())
-            if min_value > max_value:
-                messagebox.showerror("错误", "最小值不能大于最大值")
-                return None
-            # 生成随机数字并补零
-            random_number = random.randint(min_value, max_value)
-            random_string = str(random_number).zfill(random_length)
-            return random_string
-        except ValueError:
-            messagebox.showerror("错误", "请输入有效的数字范围")
-            return None
-    return None
+    return generator.generate_random_text(random_mode, random_length)
 
 def random_text():
     length = random_length_entry.get()
@@ -273,55 +238,25 @@ def random_text():
 
     length = int(length)
     text_type = random_type.get()
-
     # 如果是“随机数字”模式，使用输入框中的值
     if text_type == "随机数字":
         try:
             min_value = int(random_digit_min_entry.get())
             max_value = int(random_digit_max_entry.get())
-            if min_value > max_value:
-                messagebox.showerror("错误", "最小值不能大于最大值")
-                return
-            # 生成随机数字并补零
-            random_number = random.randint(min_value, max_value)
-            random_string = str(random_number).zfill(length)
+            random_string = generator.generate_random_text(text_type, length, random_min=min_value, random_max=max_value)
         except ValueError:
             messagebox.showerror("错误", "请输入有效的数字范围")
             return
     else:
-        random_string = generate_random_text(text_type, length)
-    
+        random_string = generator.generate_random_text(text_type, length)
+
     if random_string is not None:
         text_entry.delete(0, tk.END)
         text_entry.insert(0, random_string)
         update_preview_text()
 
 def randomize_selected_layers():
-    for i, text_data in enumerate(text_layers):
-        if text_data.get("use_random", False):  # 仅对勾选了“使用随机”的图层进行随机化
-            # 使用图层的随机模式和长度生成随机文字
-            random_mode = text_data.get("random_mode", "数字编码")
-            random_length = text_data.get("random_length", 1)
-            
-            # 如果是“随机数字”模式，使用图层存储的值
-            if random_mode == "随机数字":
-                random_min = text_data.get("random_min")
-                random_max = text_data.get("random_max")
-                if random_min is None or random_max is None:
-                    messagebox.showerror("错误", "未找到数字范围")
-                    return
-                if random_min > random_max:
-                    messagebox.showerror("错误", "最小值不能大于最大值")
-                    return
-                # 生成随机数字并补零
-                random_number = random.randint(random_min, random_max)
-                random_string = str(random_number).zfill(random_length)
-            else:
-                random_string = generate_random_text(random_mode, random_length)
-            
-            if random_string is not None:
-                text_data["text"] = random_string
-    
+    generator.randomize_selected_layers(text_layers)
     update_layer_list()
     preview_text()
 
@@ -530,6 +465,86 @@ save_entry.pack()
 btn_save = tk.Button(right_frame, text="保存图片", command=save_image)
 btn_save.pack()
 
+# ---- Effects / composite options ----
+effects_frame = tk.LabelFrame(right_frame, text="效果")
+effects_frame.pack(pady=6, fill=tk.X)
+
+# Stroke (描边)
+use_stroke_var = tk.BooleanVar(value=False)
+use_stroke_cb = tk.Checkbutton(effects_frame, text="描边", variable=use_stroke_var)
+use_stroke_cb.pack(anchor=tk.W)
+
+stroke_frame = tk.Frame(effects_frame)
+stroke_frame.pack(fill=tk.X)
+tk.Label(stroke_frame, text="宽度:").pack(side=tk.LEFT)
+stroke_width_entry = tk.Entry(stroke_frame, width=4)
+stroke_width_entry.insert(0, "2")
+stroke_width_entry.pack(side=tk.LEFT, padx=4)
+
+stroke_color_var = tk.StringVar(value="#000000")
+def choose_stroke_color():
+    col = colorchooser.askcolor(title="描边颜色")[1]
+    if col:
+        stroke_color_var.set(col)
+
+stroke_color_btn = tk.Button(stroke_frame, text="描边颜色", command=choose_stroke_color)
+stroke_color_btn.pack(side=tk.LEFT, padx=4)
+
+# Shadow (投影)
+use_shadow_var = tk.BooleanVar(value=False)
+use_shadow_cb = tk.Checkbutton(effects_frame, text="投影", variable=use_shadow_var)
+use_shadow_cb.pack(anchor=tk.W)
+
+shadow_frame = tk.Frame(effects_frame)
+shadow_frame.pack(fill=tk.X)
+tk.Label(shadow_frame, text="偏移X:").pack(side=tk.LEFT)
+shadow_offset_x = tk.Entry(shadow_frame, width=4)
+shadow_offset_x.insert(0, "10")
+shadow_offset_x.pack(side=tk.LEFT, padx=2)
+tk.Label(shadow_frame, text="偏移Y:").pack(side=tk.LEFT)
+shadow_offset_y = tk.Entry(shadow_frame, width=4)
+shadow_offset_y.insert(0, "10")
+shadow_offset_y.pack(side=tk.LEFT, padx=2)
+tk.Label(shadow_frame, text="模糊:").pack(side=tk.LEFT)
+shadow_blur_entry = tk.Entry(shadow_frame, width=4)
+shadow_blur_entry.insert(0, "10")
+shadow_blur_entry.pack(side=tk.LEFT, padx=2)
+
+shadow_color_var = tk.StringVar(value="#000000")
+def choose_shadow_color():
+    col = colorchooser.askcolor(title="投影颜色")[1]
+    if col:
+        shadow_color_var.set(col)
+
+shadow_color_btn = tk.Button(shadow_frame, text="投影颜色", command=choose_shadow_color)
+shadow_color_btn.pack(side=tk.LEFT, padx=4)
+
+# Background selection
+bg_list = assets.load_backgrounds()
+bg_var = tk.StringVar(value=bg_list[0] if bg_list else "")
+tk.Label(effects_frame, text="背景:").pack(anchor=tk.W)
+bg_dropdown = tk.OptionMenu(effects_frame, bg_var, *bg_list) if bg_list else tk.Label(effects_frame, text="(无)")
+bg_dropdown.pack(fill=tk.X)
+
+center_bg_var = tk.BooleanVar(value=True)
+center_bg_cb = tk.Checkbutton(effects_frame, text="居中背景", variable=center_bg_var)
+center_bg_cb.pack(anchor=tk.W)
+
+def hex_to_rgba(hex_color, alpha=160):
+    """Convert #RRGGBB to (r,g,b,a) tuple. If already color name (e.g., 'black'), PIL will handle it elsewhere; we try hex parsing only."""
+    if not hex_color:
+        return None
+    try:
+        hex_color = hex_color.lstrip('#')
+        if len(hex_color) == 6:
+            r = int(hex_color[0:2], 16)
+            g = int(hex_color[2:4], 16)
+            b = int(hex_color[4:6], 16)
+            return (r, g, b, alpha)
+    except Exception:
+        return None
+    return None
+
 # 添加批量生成功能
 batch_frame = tk.Frame(right_frame)
 batch_frame.pack()
@@ -557,9 +572,6 @@ def batch_generate():
         messagebox.showerror("错误", "请输入保存文件名")
         return
     
-    # 创建 output_images 文件夹（如果不存在）
-    os.makedirs("output_images", exist_ok=True)
-    
     for i in range(batch_count):
         # 执行一次随机化选中图层
         randomize_selected_layers()
@@ -571,9 +583,39 @@ def batch_generate():
             font = ImageFont.truetype(text_data["font"], text_data["size"])
             final_draw.text((text_data["x"], text_data["y"]), text_data["text"], fill=text_data["color"], font=font)
         
-        # 保存图片
-        save_path = f"output_images/{save_name}_{i + 1}.png"
-        final_img.save(save_path)
+        # Build effects options (same as single save)
+        effects_opts = {}
+        if use_stroke_var.get():
+            try:
+                effects_opts["stroke_width"] = int(stroke_width_entry.get())
+            except Exception:
+                effects_opts["stroke_width"] = 0
+            effects_opts["stroke_fill"] = stroke_color_var.get()
+
+        if use_shadow_var.get():
+            try:
+                ox = int(shadow_offset_x.get())
+            except Exception:
+                ox = 10
+            try:
+                oy = int(shadow_offset_y.get())
+            except Exception:
+                oy = 10
+            try:
+                blur = int(shadow_blur_entry.get())
+            except Exception:
+                blur = 10
+            sc = hex_to_rgba(shadow_color_var.get(), alpha=160)
+            if sc is None:
+                sc = (0, 0, 0, 160)
+            effects_opts.update({"shadow": True, "shadow_offset": (ox, oy), "shadow_blur": blur, "shadow_color": sc})
+
+        if bg_var.get():
+            effects_opts["background_name"] = bg_var.get()
+            effects_opts["center"] = center_bg_var.get()
+
+        # 保存图片 via io_ops
+        io_ops.save_image(final_img, f"{save_name}_{i + 1}", text_layers=text_layers, base_image_path=img_path, effects_opts=effects_opts if effects_opts else None)
     
     messagebox.showinfo("成功", f"已生成 {batch_count} 张图片")
 
