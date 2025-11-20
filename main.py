@@ -379,7 +379,7 @@ image_dropdown.pack(side=tk.LEFT, padx=10)
 # 字体选择
 font_label = tk.Label(top_frame, text="选择字体:")
 font_label.pack(side=tk.LEFT)
-font_dropdown = tk.OptionMenu(top_frame, font_var, *font_list)
+font_dropdown = tk.OptionMenu(top_frame, font_var, *font_list,0)
 font_dropdown.pack(side=tk.LEFT, padx=10)
 
 # 左侧栏（字体相关设置）
