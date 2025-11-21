@@ -19,7 +19,8 @@ def save_project():
 
     project_data = {
         "image_path": img_path,
-        "text_layers": text_layers
+        "text_layers": text_layers,
+        "image_layers": [{"path": il.get("path"), "x": il.get("x"), "y": il.get("y"), "w": il.get("w"), "h": il.get("h")} for il in image_layers]
     }
 
     save_path = tk.filedialog.asksaveasfilename(
@@ -49,11 +50,33 @@ def load_project():
             img = Image.open(img_path)
             draw = ImageDraw.Draw(img)
             img_tk = ImageTk.PhotoImage(img)
+            try:
+                canvas.delete("all")
+            except Exception:
+                pass
             canvas.create_image(0, 0, anchor=tk.NW, image=img_tk)
-            canvas.config(width=img.width, height=img.height)
+            canvas.configure(scrollregion=(0, 0, img.width, img.height))
 
-            text_layers = project_data["text_layers"]
+            text_layers = project_data.get("text_layers", [])
+            image_layers.clear()
+            # restore image layers if present (store metadata -> reopen scaled images)
+            for il in project_data.get("image_layers", []):
+                try:
+                    p = il.get("path")
+                    w = il.get("w")
+                    h = il.get("h")
+                    x = il.get("x", 0)
+                    y = il.get("y", 0)
+                    pil = Image.open(p).convert("RGBA")
+                    if w and h:
+                        pil = pil.resize((int(w), int(h)), Image.LANCZOS)
+                    image_layers.append({"path": p, "pil": pil, "w": pil.width, "h": pil.height, "x": int(x), "y": int(y)})
+                except Exception:
+                    # skip problematic image layers
+                    continue
+
             update_layer_list()
+            update_image_layer_list()
             preview_text()
 
             messagebox.showinfo("成功", "工程已加载")
@@ -72,14 +95,20 @@ def open_image(*args):
     img = Image.open(img_path)
     draw = ImageDraw.Draw(img)
     img_tk = ImageTk.PhotoImage(img)
+    size_entry.delete(0, tk.END)
     size_entry.insert(0, str(min(img.width, img.height) // 10))
     x_entry.delete(0, tk.END)
     x_entry.insert(0, "0")
     y_entry.delete(0, tk.END)
     y_entry.insert(0, "0")
-    text_layers.clear()
-    preview_text_data = {}
-    update_layer_list()
+    # 根据用户选择决定是否清空现有图层
+    if clear_layers_var.get():
+        text_layers.clear()
+        image_layers.clear()
+        preview_text_data = {}
+        update_layer_list()
+        update_image_layer_list()
+    # 总是刷新画布显示（但如果不清空图层，则保留图层信息）
     preview_text()
 
 def validate_coordinates(value, max_value):
@@ -90,6 +119,27 @@ def preview_text(*args):
         return
     preview_img = img.copy()
     preview_draw = ImageDraw.Draw(preview_img)
+
+    # 先绘制已添加的图片图层
+    for il in image_layers:
+        try:
+            pil = il.get("pil")
+            if pil:
+                preview_img.paste(pil, (int(il.get("x", 0)), int(il.get("y", 0))), pil)
+        except Exception:
+            continue
+
+    # 绘制预览中的图片（当前图片图层的预览）
+    if preview_image_data:
+        try:
+            pil = preview_image_data.get("pil")
+            if pil:
+                preview_img.paste(pil, (int(preview_image_data.get("x", 0)), int(preview_image_data.get("y", 0))), pil)
+                # 描边矩形框
+                bbox = (preview_image_data.get("x", 0), preview_image_data.get("y", 0), preview_image_data.get("x", 0) + pil.width, preview_image_data.get("y", 0) + pil.height)
+                preview_draw.rectangle(bbox, outline="black", width=2)
+        except Exception:
+            pass
 
     # 绘制已经添加的文字（不绘制矩形框）
     for text_data in text_layers:
@@ -113,7 +163,14 @@ def preview_text(*args):
 
     global img_tk
     img_tk = ImageTk.PhotoImage(preview_img)
+    # clear previous canvas items and show new image
+    try:
+        canvas.delete("all")
+    except Exception:
+        pass
     canvas.create_image(0, 0, anchor=tk.NW, image=img_tk)
+    # set scrollregion to image size so scrollbars work
+    canvas.configure(scrollregion=(0, 0, preview_img.width, preview_img.height))
 
 def update_preview_text(event=None):
     if img is None:
@@ -166,18 +223,116 @@ def remove_text():
         update_layer_list()
         preview_text()
 
+def browse_image_file():
+    p = tk.filedialog.askopenfilename(title="选择图片文件", filetypes=[("图片", "*.png *.jpg *.jpeg *.bmp *.gif")])
+    if p:
+        image_path_entry.delete(0, tk.END)
+        image_path_entry.insert(0, p)
+
+def open_image_layer():
+    """Open the selected image for adding as a layer and scale to target size for preview."""
+    global preview_image_data
+    if img is None:
+        messagebox.showerror("错误", "请先打开背景图片")
+        return
+    p = image_path_entry.get()
+    if not p:
+        messagebox.showerror("错误", "请选择要添加的图片文件")
+        return
+    try:
+        w_val = width_entry.get()
+        h_val = height_entry.get()
+        w = int(w_val) if w_val.isdigit() else None
+        h = int(h_val) if h_val.isdigit() else None
+        pil = Image.open(p).convert("RGBA")
+        if w and h:
+            pil = pil.resize((w, h), Image.LANCZOS)
+        x = int(x_img_entry.get()) if x_img_entry.get().isdigit() else 0
+        y = int(y_img_entry.get()) if y_img_entry.get().isdigit() else 0
+        preview_image_data = {"path": p, "pil": pil, "w": pil.width, "h": pil.height, "x": x, "y": y}
+        preview_text()
+    except Exception as e:
+        messagebox.showerror("错误", f"打开图片失败: {e}")
+
+def add_image_layer():
+    global preview_image_data
+    if img is None:
+        messagebox.showerror("错误", "请先打开背景图片")
+        return
+    if not preview_image_data:
+        messagebox.showerror("错误", "请先预览要添加的图片图层")
+        return
+    # append a copy (keep pil in memory)
+    image_layers.append({"path": preview_image_data.get("path"), "pil": preview_image_data.get("pil"), "w": preview_image_data.get("w"), "h": preview_image_data.get("h"), "x": preview_image_data.get("x"), "y": preview_image_data.get("y")})
+    update_image_layer_list()
+    preview_image_data = {}
+    preview_text()
+
+def remove_image_layer():
+    selected = image_layer_listbox.curselection()
+    if selected:
+        del image_layers[selected[0]]
+        update_image_layer_list()
+        preview_text()
+
 def save_image():
     if img is None:
         return
     final_img = img.copy()
+    # paste image layers first
+    for il in image_layers:
+        try:
+            pil = il.get("pil")
+            if pil:
+                final_img.paste(pil, (int(il.get("x", 0)), int(il.get("y", 0))), pil)
+        except Exception:
+            continue
+
     final_draw = ImageDraw.Draw(final_img)
+    # draw text layers (optionally with stroke)
+    stroke_opts = None
+    if use_stroke_var.get():
+        try:
+            sw = int(stroke_width_entry.get())
+        except Exception:
+            sw = 0
+        stroke_fill = stroke_color_var.get()
+        stroke_opts = {"stroke_width": sw, "stroke_fill": stroke_fill}
+
     for text_data in text_layers:
         font = ImageFont.truetype(text_data["font"], text_data["size"])
-        final_draw.text((text_data["x"], text_data["y"]), text_data["text"], fill=text_data["color"], font=font)
+        if stroke_opts and stroke_opts.get("stroke_width", 0) > 0:
+            final_draw.text((text_data["x"], text_data["y"]), text_data["text"], fill=text_data["color"], font=font, stroke_width=stroke_opts["stroke_width"], stroke_fill=stroke_opts.get("stroke_fill"))
+        else:
+            final_draw.text((text_data["x"], text_data["y"]), text_data["text"], fill=text_data["color"], font=font)
+
+    # Build effects options (shadow/background), do NOT include stroke because already applied
+    effects_opts = {}
+    if use_shadow_var.get():
+        try:
+            ox = int(shadow_offset_x.get())
+        except Exception:
+            ox = 10
+        try:
+            oy = int(shadow_offset_y.get())
+        except Exception:
+            oy = 10
+        try:
+            blur = int(shadow_blur_entry.get())
+        except Exception:
+            blur = 10
+        sc = hex_to_rgba(shadow_color_var.get(), alpha=160)
+        if sc is None:
+            sc = (0, 0, 0, 160)
+        effects_opts.update({"shadow": True, "shadow_offset": (ox, oy), "shadow_blur": blur, "shadow_color": sc})
+
+    if bg_var.get():
+        effects_opts["background_name"] = bg_var.get()
+        effects_opts["center"] = center_bg_var.get()
 
     save_name = save_entry.get()
     if save_name:
-        ok = io_ops.save_image(final_img, save_name)
+        ok = io_ops.save_image(final_img, save_name, text_layers=None, base_image_path=None, effects_opts=effects_opts if effects_opts else None)
         if ok:
             messagebox.showinfo("成功", "图片已保存")
 
@@ -205,6 +360,17 @@ def update_layer_list():
         
         layer_info += ")"
         layer_listbox.insert(tk.END, layer_info)
+
+def update_image_layer_list():
+    # list image layers in a separate listbox
+    try:
+        image_layer_listbox.delete(0, tk.END)
+    except Exception:
+        return
+
+    for i, il in enumerate(image_layers):
+        info = f"{i + 1}: {os.path.basename(il.get('path',''))} (大小: {il.get('w')}x{il.get('h')}, 位置: {il.get('x')},{il.get('y')})"
+        image_layer_listbox.insert(tk.END, info)
 
 def adjust_x(offset):
     x = int(x_entry.get()) + offset
@@ -285,10 +451,12 @@ image_var = tk.StringVar(root, default_image)
 font_var = tk.StringVar(root, default_font)
 color_var = tk.StringVar(root, "black")
 preview_text_data = {}
+# 是否在切换背景图片时清空所有图层
+clear_layers_var = tk.BooleanVar(value=True)
 
 #右侧栏
-right_frame = tk.Frame(root)
-right_frame.pack(side=tk.RIGHT, padx=10, pady=10)
+right_frame = tk.Frame(root,width=300)
+# do not pack now; will be embedded into a scrollable right container after center is created
 
 # 其他控件初始化代码
 random_type = tk.StringVar(value="单词")  # 创建随机模式变量
@@ -310,16 +478,45 @@ image_label.pack(side=tk.LEFT)
 image_var.trace("w", open_image)
 image_dropdown = tk.OptionMenu(top_frame, image_var, *image_list)
 image_dropdown.pack(side=tk.LEFT, padx=10)
+# 切换图片时是否清空所有图层
+clear_layers_cb = tk.Checkbutton(top_frame, text="是否清空图层", variable=clear_layers_var)
+clear_layers_cb.pack(side=tk.LEFT, padx=6)
 
 # 字体选择
 font_label = tk.Label(top_frame, text="选择字体:")
 font_label.pack(side=tk.LEFT)
-font_dropdown = tk.OptionMenu(top_frame, font_var, *font_list,0)
+font_dropdown = tk.OptionMenu(top_frame, font_var, *font_list)
 font_dropdown.pack(side=tk.LEFT, padx=10)
 
-# 左侧栏（字体相关设置）
-left_frame = tk.Frame(root)
-left_frame.pack(side=tk.LEFT, padx=10, pady=10)
+# 左侧栏（字体相关设置） — 使用可滚动区域以容纳较多控件
+left_container = tk.Frame(root)
+left_container.pack(side=tk.LEFT, padx=10, pady=10, fill=tk.Y)
+
+# Canvas + scrollbar
+left_canvas = tk.Canvas(left_container, borderwidth=0,width=200)
+left_scrollbar = tk.Scrollbar(left_container, orient=tk.VERTICAL, command=left_canvas.yview)
+left_canvas.configure(yscrollcommand=left_scrollbar.set)
+
+left_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+left_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+# 内部可滚动 frame，后面代码继续将控件添加到 `left_frame`
+left_frame = tk.Frame(left_canvas)
+left_canvas.create_window((0, 0), window=left_frame, anchor=tk.NW)
+
+def _left_frame_configure(event):
+    left_canvas.configure(scrollregion=left_canvas.bbox("all"))
+
+left_frame.bind("<Configure>", _left_frame_configure)
+
+def _on_mousewheel_left(event):
+    # Windows: event.delta is multiple of 120
+    try:
+        left_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+    except Exception:
+        pass
+
+left_canvas.bind_all("<MouseWheel>", _on_mousewheel_left)
 
 # 字体大小
 size_label = tk.Label(left_frame, text="字体大小:")
@@ -445,8 +642,42 @@ use_random_checkbox.pack()
 btn_text = tk.Button(left_frame, text="添加文字", command=add_text)
 btn_text.pack()
 
+# ---- Image layer controls (左侧) ----
+img_layer_label = tk.Label(left_frame, text="图片图层:")
+img_layer_label.pack(pady=(8,0))
+
+image_path_entry = tk.Entry(left_frame, width=30)
+image_path_entry.pack()
+
+browse_img_btn = tk.Button(left_frame, text="选择图片文件", command=browse_image_file)
+browse_img_btn.pack(pady=2)
+
+size_frame_img = tk.Frame(left_frame)
+size_frame_img.pack()
+tk.Label(size_frame_img, text="宽: ").pack(side=tk.LEFT)
+width_entry = tk.Entry(size_frame_img, width=6)
+width_entry.pack(side=tk.LEFT)
+tk.Label(size_frame_img, text="高: ").pack(side=tk.LEFT)
+height_entry = tk.Entry(size_frame_img, width=6)
+height_entry.pack(side=tk.LEFT)
+
+pos_frame_img = tk.Frame(left_frame)
+pos_frame_img.pack()
+tk.Label(pos_frame_img, text="X: ").pack(side=tk.LEFT)
+x_img_entry = tk.Entry(pos_frame_img, width=6)
+x_img_entry.pack(side=tk.LEFT)
+tk.Label(pos_frame_img, text="Y: ").pack(side=tk.LEFT)
+y_img_entry = tk.Entry(pos_frame_img, width=6)
+y_img_entry.pack(side=tk.LEFT)
+
+img_preview_btn = tk.Button(left_frame, text="预览图片图层", command=open_image_layer)
+img_preview_btn.pack(pady=4)
+
+img_add_btn = tk.Button(left_frame, text="添加图片图层", command=add_image_layer)
+img_add_btn.pack()
+
 # 添加“随机化选中图层”按钮
-btn_randomize_layers = tk.Button(right_frame, text="随机化选中图层", command=randomize_selected_layers)
+btn_randomize_layers = tk.Button(right_frame, text="随机所有", command=randomize_selected_layers)
 btn_randomize_layers.pack()
 
 layer_label = tk.Label(right_frame, text="文字图层:")
@@ -457,13 +688,18 @@ layer_listbox.pack()
 btn_remove_text = tk.Button(right_frame, text="删除选中文字", command=remove_text)
 btn_remove_text.pack()
 
+image_layer_label = tk.Label(right_frame, text="图片图层:")
+image_layer_label.pack()
+image_layer_listbox = Listbox(right_frame, height=5)
+image_layer_listbox.pack()
+
+btn_remove_image = tk.Button(right_frame, text="删除选中图片", command=remove_image_layer)
+btn_remove_image.pack()
+
 save_label = tk.Label(right_frame, text="保存文件名:")
 save_label.pack()
 save_entry = tk.Entry(right_frame)
 save_entry.pack()
-
-btn_save = tk.Button(right_frame, text="保存图片", command=save_image)
-btn_save.pack()
 
 # ---- Effects / composite options ----
 effects_frame = tk.LabelFrame(right_frame, text="效果")
@@ -578,10 +814,32 @@ def batch_generate():
         
         # 生成最终图片
         final_img = img.copy()
+        # paste image layers
+        for il in image_layers:
+            try:
+                pil = il.get("pil")
+                if pil:
+                    final_img.paste(pil, (int(il.get("x", 0)), int(il.get("y", 0))), pil)
+            except Exception:
+                continue
+
         final_draw = ImageDraw.Draw(final_img)
+        # draw texts with optional stroke
+        stroke_opts = None
+        if use_stroke_var.get():
+            try:
+                sw = int(stroke_width_entry.get())
+            except Exception:
+                sw = 0
+            stroke_fill = stroke_color_var.get()
+            stroke_opts = {"stroke_width": sw, "stroke_fill": stroke_fill}
+
         for text_data in text_layers:
             font = ImageFont.truetype(text_data["font"], text_data["size"])
-            final_draw.text((text_data["x"], text_data["y"]), text_data["text"], fill=text_data["color"], font=font)
+            if stroke_opts and stroke_opts.get("stroke_width", 0) > 0:
+                final_draw.text((text_data["x"], text_data["y"]), text_data["text"], fill=text_data["color"], font=font, stroke_width=stroke_opts["stroke_width"], stroke_fill=stroke_opts.get("stroke_fill"))
+            else:
+                final_draw.text((text_data["x"], text_data["y"]), text_data["text"], fill=text_data["color"], font=font)
         
         # Build effects options (same as single save)
         effects_opts = {}
@@ -614,22 +872,42 @@ def batch_generate():
             effects_opts["background_name"] = bg_var.get()
             effects_opts["center"] = center_bg_var.get()
 
-        # 保存图片 via io_ops
-        io_ops.save_image(final_img, f"{save_name}_{i + 1}", text_layers=text_layers, base_image_path=img_path, effects_opts=effects_opts if effects_opts else None)
+        # 保存图片 via io_ops (effects_opts excludes stroke because stroke already applied)
+        io_ops.save_image(final_img, f"{save_name}_{i + 1}", text_layers=None, base_image_path=None, effects_opts=effects_opts if effects_opts else None)
     
     messagebox.showinfo("成功", f"已生成 {batch_count} 张图片")
+
 
 batch_button = tk.Button(batch_frame, text="批量生成", command=batch_generate)
 batch_button.pack(side=tk.LEFT)
 
-canvas = tk.Canvas(root)
-canvas.pack(side=tk.RIGHT)
+# 中央显示区域（带水平+垂直滚动条）
+center_frame = tk.Frame(root)
 
+# vertical and horizontal scrollbars for center canvas
+center_vscroll = tk.Scrollbar(center_frame, orient=tk.VERTICAL)
+center_hscroll = tk.Scrollbar(center_frame, orient=tk.HORIZONTAL)
+canvas = tk.Canvas(center_frame, xscrollcommand=center_hscroll.set, yscrollcommand=center_vscroll.set, background="white")
+center_vscroll.config(command=canvas.yview)
+center_hscroll.config(command=canvas.xview)
+
+center_vscroll.pack(side=tk.RIGHT, fill=tk.Y)
+center_hscroll.pack(side=tk.BOTTOM, fill=tk.X)
+canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+# pack center and right frames
+left_container.update_idletasks()
+center_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+right_frame.pack(side=tk.RIGHT, fill=tk.Y)
+
+# runtime state
 img = None
 img_tk = None
 img_path = ""
 draw = None
 text_layers = []
+image_layers = []
+preview_image_data = {}
 
 if image_list:
     open_image()

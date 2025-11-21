@@ -1,1 +1,1 @@
-assets
+load_project

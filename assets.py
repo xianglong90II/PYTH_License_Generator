@@ -16,6 +16,14 @@ def load_fonts():
         return []
 
 def load_backgrounds():
+    """Return list of background image filenames in `backgroundImages` folder."""
+    bg_dir = "backgroundImages"
+    try:
+        return [f for f in os.listdir(bg_dir) if f.lower().endswith((".png", ".jpg", ".jpeg", ".bmp", ".gif"))]
+    except FileNotFoundError:
+        return []
+
+def load_backgrounds():
     """Return list of background image filenames in backgroundImages directory."""
     bg_dir = "backgroundImages"
     try:
