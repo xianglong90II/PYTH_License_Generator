@@ -275,6 +275,41 @@ def remove_image_layer():
         update_image_layer_list()
         preview_text()
 
+def replace_image_layer():
+    """Replace the image file for the selected image layer while keeping its x,y,w,h."""
+    selected = image_layer_listbox.curselection()
+    if not selected:
+        messagebox.showerror("错误", "请先选择要更换的图片图层")
+        return
+    idx = selected[0]
+    il = image_layers[idx]
+    # ask for file
+    p = tk.filedialog.askopenfilename(title="选择替换图片文件", filetypes=[("图片", "*.png *.jpg *.jpeg *.bmp *.gif")])
+    if not p:
+        return
+    try:
+        new_pil = Image.open(p).convert("RGBA")
+        # preserve stored w/h if present, else adopt new size
+        w = il.get("w")
+        h = il.get("h")
+        if w and h:
+            try:
+                new_pil = new_pil.resize((int(w), int(h)), Image.LANCZOS)
+            except Exception:
+                pass
+        else:
+            il["w"] = new_pil.width
+            il["h"] = new_pil.height
+
+        # update path and pil
+        il["path"] = p
+        il["pil"] = new_pil
+        # refresh UI
+        update_image_layer_list()
+        preview_text()
+    except Exception as e:
+        messagebox.showerror("错误", f"替换图片失败: {e}")
+
 def save_image():
     if img is None:
         return
@@ -695,6 +730,8 @@ image_layer_listbox.pack()
 
 btn_remove_image = tk.Button(right_frame, text="删除选中图片", command=remove_image_layer)
 btn_remove_image.pack()
+btn_replace_image = tk.Button(right_frame, text="更换图片", command=lambda: replace_image_layer())
+btn_replace_image.pack()
 
 save_label = tk.Label(right_frame, text="保存文件名:")
 save_label.pack()
